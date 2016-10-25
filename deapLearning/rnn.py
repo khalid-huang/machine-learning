@@ -65,9 +65,12 @@ for j in range(10000):
     for position in range(binary_dim):
         
         # generate input and output
+        print a_int
+        print a
+        print position
         X = np.array([[a[binary_dim - position - 1],b[binary_dim - position - 1]]])
         y = np.array([[c[binary_dim - position - 1]]]).T
-
+        print X
         # hidden layer (input ~+ prev_hidden)
         layer_1 = sigmoid(np.dot(X,synapse_0) + np.dot(layer_1_values[-1],synapse_h))
 
