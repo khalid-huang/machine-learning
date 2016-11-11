@@ -8,9 +8,13 @@ rng = numpy.random  # 随机数生成器
 
 
 # help function
-# 数据生成,返回一个数组，第一个是x数据矩阵，每行表示一个数据，第二个是y数组
+# 模拟线性数据生成,返回一个数组，第一个是x数据矩阵，每行表示一个数据，第二个是y数组
 def genData(N,feats):
-	return (rng.randn(N,feats), 1+rng.randn(N))
+	x = rng.randn(N,feats)
+	w = 10 * rng.randn(feats)
+	y =  numpy.dot(x,w) + rng.randn(N) * 0.4 #使用矩阵乘法得到结果，同时加上一些噪声
+	print y.shape
+	return (x,y)
 
 #定义全局使用的参数
 N = 500 #样本数
@@ -48,11 +52,13 @@ predict = theano.function(
 
 # Train
 D = genData(N,feats)
+print D[0].shape
+print D[1].shape
 for i in range(train_loop):
 	pred, cost = linear_regression_model(D[0], D[1])
-	print cost
+	#print cost
 
 result = predict(D[0])
 print result - D[1]
-print result .shape
-print D[1].shape
+#print result .shape
+#print D[1].shape
