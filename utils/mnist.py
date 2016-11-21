@@ -4,6 +4,12 @@ import struct
 import os
 import matplotlib.pyplot as plt
 
+import cPickle
+import gzip
+
+"""
+The first method
+"""
 _tag = '>' #使用大端读取
 _twoBytes = 'II' #读取数据格式是两个整数
 _fourBytes =  'IIII' #读取的数据格式是四个整数
@@ -25,7 +31,7 @@ def getImage(filename = None):
 	for i in xrange(numImgs):
 		imgVal  = struct.unpack_from(_msb_pictureBytes, buf, index)
 		index += struct.calcsize(_pictureBytes)
-		#下面不知道在做什么
+
 		imgVal	= list(imgVal)
 		#for j in range(len(imgVal)):
 		#	if imgVal[j] > 1:
@@ -49,8 +55,10 @@ def getlable(filename=None) :
 
 def outImg(arrX, arrY, order):
 	"""
-	根据指定的order来获取对应的图片和标签
+	根据指定的order来获取集合中对应的图片和标签
 	"""
+	test1 = np.array([1,2,3])
+	print test1.shape
 	image = np.array(arrX[order])
 	print image.shape
 	image = image.reshape(28,28)
@@ -58,15 +66,32 @@ def outImg(arrX, arrY, order):
 	print label
 	outfile = str(order) + '_'+str(label) + '.png'
 	plt.figure()
-	plt.imshow(image, cmap = 'binary')
-	plt.savefig("./" + outfile)
+	plt.imshow(image, cmap="gray_r") # 在MNIST官网中有说道 “Pixel values are 0 to 255. 0 means background (white), 255 means foreground (black).”
+	plt.show()
+	#plt.savefig("./" + outfile) #保存图片
+
+"""
+The second method
+"""
+def  load_data(filename = None):
+	f = gzip.open(filename, 'rb')
+	training_data, validation_data, test_data = cPickle.load(f)
+	return (training_data, validation_data, test_data)
+
+def test_cPickle():
+	filename = '../dataset/MNIST/mnist.pkl.gz'
+	training_data, validation_data, test_data = load_data(filename)
+	print len(test_data)
+	outImg(training_data[0],training_data[1], 1000)
+	#print len(training_data[1])
 
 def test():
 	trainfile_X = '../dataset/MNIST/train-images.idx3-ubyte'
         trainfile_y = '../dataset/MNIST/train-labels.idx1-ubyte'
         arrX = getImage(trainfile_X)
         arrY = getlable(trainfile_y)
-        outImg(arrX, arrY, 3)
+        outImg(arrX, arrY, 1000)
 
 if __name__  == '__main__':
-	test()
+	#test_cPickle() #test the second method
+	#test() #test the first method
