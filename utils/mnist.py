@@ -93,5 +93,5 @@ def test():
         outImg(arrX, arrY, 1000)
 
 if __name__  == '__main__':
-	#test_cPickle() #test the second method
+	test_cPickle() #test the second method
 	#test() #test the first method
