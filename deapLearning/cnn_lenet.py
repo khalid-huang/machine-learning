@@ -13,6 +13,7 @@ import theano.tensor as T
 from  theano.tensor.signal import pool
 from theano.tensor.nnet import conv2d
 
+#layer model
 class LeNetConvPoolLayer(object):
 	"""
 	卷积层
@@ -21,10 +22,11 @@ class LeNetConvPoolLayer(object):
 		"""
 		rng:随机数生成器
 		input:输入的批量测试数据
-		filter_shape:list of lenght 4，(number of filters, num input feature maps, filter height, filter width)
+		filter_shape:list of lenght 4，(number of filters, num input feature maps, filter height, filter width); 这里要注意 的number of filters表示的是这个层有多少个输出特征图，也就是说每个输入特征图会有多少个卷积核；而不是这个层有的全部的卷积核数
 		image_shape: list of length 4, (batch size[表示批量的数据，也就是一次计算使用的图片数], num input feature maps, image height, image width)
 		poolsize:池化的核大小
 		"""
+		print image_shape[1], filter_shape[1]
 		assert image_shape[1] == filter_shape[1]
 		self.input = input
 
@@ -35,7 +37,7 @@ class LeNetConvPoolLayer(object):
 			numpy.asarray(
 				rng.uniform(
 					low = -W_bound,
-					height = W_bound,
+					high= W_bound,
 					size = filter_shape), #(number of filters, num input feature maps, filter height, filter width)；每个单体是一个hieght * width大小的矩阵，表示一个核，每number input feature maps 个单体组成一个个体，表示所有输入特征图的一组核，而一共有number of filtes组；其实这个也可以看作是每列都代表了一个输出特征图的一组核
 				dtype = theano.config.floatX
 			),
@@ -60,12 +62,11 @@ class LeNetConvPoolLayer(object):
 		)
 
 		#计算的结果还要加上偏置，但是我们的输出pool_out是一个(batch size, output feature map, height, width)这样一个四维的向量，而b是一个一维的向量，所以要将b进行扩展成(1, output feature map, 1, 1),再利用numpy的broadcasted进行相加；则每个批量的用例中的每个特征图的值都会加上这个特征图对应的偏置了
-		self.output = T.tanh(pool_out + self.b.dimshuffle('x', 0, 'x', 'x'))
+		self.output = T.tanh(pooled_out + self.b.dimshuffle('x', 0, 'x', 'x'))
 
 		self.params = [self.W, self.b]
 
 		self.input = input
-
 
 class HiddenLayer(object):
 	def __init__(self, rng, input, n_in, n_out, W=None, b=None, activation=T.tanh):
@@ -130,7 +131,7 @@ class LogisticRegression(object):
 		)
 		self.b = theano.shared(
 			value=numpy.zeros(
-				(n_out,)
+				(n_out,),
 				dtype = theano.config.floatX
 			),
 			name="b",
@@ -162,10 +163,205 @@ class LogisticRegression(object):
 			)
 
 		if y.dtype.startswith('int'):
-			#T.neq函数用于查找出两个对象之间不相符的数目；T.mean用于去除以个数，得到正确率
+			#T.neq函数用于查找出两个对象之间不相符的数目；T.mean用于去除以个数，得到错误率
 			return T.mean(T.neq(self.y_pred,y)) 
 		else:
 			raise NotImplementedError()
+
+#network model
+class simpleLenet(object):
+	def __init__(self,learning_rate =0.1, n_epochs=200,
+			dataset="mnist.pkl.gz",
+			nkerns=[20,50], batch_size=500):
+		"""
+		根据传入的参数进行模型的初始化
+		learning_rate@float:学习率
+		n_epochs@int:表示进行批量迭代的次数
+		dataset@string:数据集的路径
+		nkerns@list:每个卷积-池化层使用在每个输入特征图的核的个数(也就是输出特征图的个数)；所以第n层会用到的总的核的个数是the number of input feature maps * the number of kernes(也就是上面传入的nkerns[n],n表示第几层)
+		"""	
+		print "...init model"
+		self.rng = numpy.random.RandomState(23455)
+		self.nkerns = nkerns
+		self.batch_size = batch_size
+		self.learning_rate = learning_rate
+		self.n_epochs = n_epochs
+
+		#测试用
+		#self.n_epochs = 10
+		#self.batch_size = 10
+
+		#加载数据
+		datasets = load_data(dataset)
+		self.train_set_x, self.train_set_y = datasets[0] 
+		self.valid_set_x,self.valid_set_y = datasets[1]
+		self.test_set_x, self.test_set_y = datasets[2]
+		#根据有的batch_size计算总共有多少个batch块
+		n_train_number = self.train_set_x.get_value(borrow=True).shape[0]
+		n_valid_number = self.valid_set_x.get_value(borrow=True).shape[0]
+		n_test_number = self.test_set_x.get_value(borrow=True).shape[0]
+		self.n_train_batches = n_train_number // self.batch_size #进行floor 除法
+		self.n_valid_batches = n_valid_number // self.batch_size
+		self.n_test_batches = n_test_number // self.batch_size
+
+		#测试用
+		#self.n_train_batches = 100
+		#self.n_valid_batches = 10
+		#self.n_test_batches = 10
+
+		#建立一些符号
+		self.index = T.lscalar() #index to a batch
+
+		self.x = T.matrix('x') #x表示一个矩阵，每行代表了一个数据用例
+		self.y = T.ivector('y') #用一个向量表示结果，每个值表示一个label
+
+	def build(self):
+		"""
+		建立网络模型图
+		"""
+		print "..build lenet model"
+		#我们要将我们数据进行维数变换；因为我们的输入数据是一个n*784的类型的矩阵，n表示行数；所以 我们需要把它变成一个n*1*28*28的，转成theano处理的4D数据；第一个n表示有多少个用例，也就是我们的batch size;第2个表示每个用例有一个特征图；28×28表示每个特征图的height * width
+		x = self.x
+		y = self.y
+		index = self.index
+		batch_size = self.batch_size
+		nkerns = self.nkerns
+		rng = self.rng
+		learning_rate = self.learning_rate
+
+		layer0_input = x.reshape((batch_size, 1, 28, 28))
+
+		#第一个卷积池化层
+		layer0 = LeNetConvPoolLayer(
+			rng,
+			input=layer0_input,
+			image_shape=(batch_size,1,28,28),
+			filter_shape=(nkerns[0],1,5,5),
+			poolsize=(2,2)
+		)
+
+		#第二个卷积池化层
+		#image_shape的设置为首先每个迭代有batch_size个用例，本轮的每个图片输入对应有nkers[0]个输入特征图；大小为(28-5+1) / 2
+		layer1 = LeNetConvPoolLayer(
+			rng,
+			input=layer0.output,
+			image_shape=(batch_size, nkerns[0],12,12),
+			filter_shape=(nkerns[1], nkerns[0], 5,5),
+			poolsize=(2,2)
+		)
+		#因为 后面要接下全连接层了，而全连接层的输入与卷积-池化是不一样的，它是一个类似n*m的两维数据，n表示用例数，而m表示每个用例有多少维数据（多少个x）;所以我们要把layer1的输出batch_size*nkers[1]*((12-5+1)/2))*((12-5+1)/2))这样的一个四维数据变成一个batch_size * (nkers[1]*((12-5+1)/2))*((12-5+1)/2)))这样一个两维数据；也就是将所有的输出特征图都连成一个一维的数据
+		layer2_input = layer1.output.flatten(2)
+
+		layer2 = HiddenLayer(
+			rng,
+			input=layer2_input,
+			n_in = nkerns[1] * 4 * 4, #每个输入数据有the previous layer's numpy of output feature map * height * width 个输入神经元
+			n_out = 500,
+			activation = T.tanh
+		)
+
+		#分类器，使用softmax的logistic回归模型
+		layer3 = LogisticRegression(input=layer2.output, n_in=500, n_out=10)
+
+		#测试模型
+		self.test_model = theano.function(
+			[index],
+			layer3.errors(y),
+			givens={
+				x:self.test_set_x[index * batch_size:(index+1)*batch_size], #根据batch_size来进行选择数据
+				y:self.test_set_y[index * batch_size:(index+1)*batch_size]
+			}
+		)
+
+		#校验模型
+		self.validation_model = theano.function(
+			[index],
+			layer3.errors(y),
+			givens={
+				x:self.valid_set_x[index * batch_size:(index+1)*batch_size], #根据batch_size来进行选择数据
+				y:self.valid_set_y[index * batch_size:(index+1)*batch_size]
+			}
+		)
+
+		#对应的NLL损失函数(负对数似然)
+		cost = layer3.negative_log_likeihood(y)
+		params = layer3.params + layer2.params + layer1.params + layer0.params
+		#得到偏导
+		grads = T.grad(cost, params)
+		updates = [
+			(param_i, param_i - learning_rate * grad_i)
+			for param_i, grad_i in zip(params, grads)
+		]
+
+		self.train_model = theano.function(
+			[index],
+			cost,
+			updates = updates,
+			givens = {
+				x:self.train_set_x[index*batch_size:(index+1)*batch_size],
+				y:self.train_set_y[index*batch_size:(index+1)*batch_size]
+			}
+		)
+
+	def train(self):
+		"""
+		进行训练
+		"""
+		print "... train model"
+		#用以测试效果的，主要是减少
+		#patience = 100
+		
+		patience = 10000 #做一个监控，是一个最大的可容忍的训练次数值; 它的值会更新；它的作用是，如果在迭代的过程中，出现了最好结果的话，就在patience和 patience_increase * iter之间选择一个最大値，然后在本轮迭代结束的时候，比较下patience 是否比iter小；如果小的话就则后续的迭代都不做了；可以看出这样的使用是在保证迭代一定做了patience / patience_increase的情况下，同时还根据出现最好的结果时提前结束迭代，也就是不做后续迭代
+		patience_increase = 2 
+		improvement_threshold = 0.995 #
+		validation_frequency = min(self.n_train_batches, patience // 2)
+
+		best_validation_loss = numpy.inf #记录最好的迭代结果的出现，也就是Loss最小的时候
+		best_iter = 0 #对应的出现第几个批量迭代
+		test_score = 0
+		start_time = timeit.default_timer() #用于计时
+
+		#关于迭代有一个说明，就是每个迭代的epoch(周期)都会用上所有的batches块，也就是说每个epoch有batches_number次iter(batches_number表示批量块的个数，它的值是train_number//batch_size)
+		epoch = 0 #记录迭代的周期数
+		done_looping = False #用于结束迭代的策略之一
+
+		while (epoch < self.n_epochs) and (not done_looping):
+			epoch = epoch + 1
+			for minibatch_index in range(self.n_train_batches):
+				iter = (epoch - 1) * self.n_train_batches + minibatch_index #计算目前已经迭代了几次
+				if iter % 10 == 0:
+					print('training @ iter =  %i' % iter)
+				cost_ij = self.train_model(minibatch_index)
+				#判断是否需要进行校验
+				if(iter + 1) % validation_frequency == 0:
+					validation_losses = [self.validation_model(i) for i in range(self.n_valid_batches)]
+					this_validation_loss = numpy.mean(validation_losses)
+					#打印错误率，错误率是估计错误的结果除以全部的用例数
+					print(('epoch %i,minibatch %i/%i, validation error rate %f %%') %
+						(epoch, minibatch_index + 1, self.n_train_batches, this_validation_loss * 100.))
+					#如果得到了一个目前最好的结果的话，首先就更新我们的best_validation_loss和best_iter，同时在测试集上进行测试；如果有本次的测试结果比上一次最好的imprement_threshold倍还好的话，就提高patience; 
+					if this_validation_loss < best_validation_loss:
+						if this_validation_loss < best_validation_loss * improvement_threshold:
+							patience = max(patience, iter * patience_increase)
+
+						best_validation_loss = this_validation_loss
+						best_iter = iter
+
+						test_losses =  [
+							self.test_model(i) for i in range(self.n_test_batches)
+						]
+						test_score = numpy.mean(test_losses)
+						print(('  epoch %i, minibatch %i/%i, test error rate of best model %f %%') %
+							(epoch, minibatch_index + 1, self.n_train_batches, test_score * 100.))
+
+				if patience <= iter:
+					done_looping = True
+					break
+
+		end_time = timeit.default_timer()
+		print 'Optimization complete' 
+		print ('Best validation score of %f %% obtained at iteration %i, with test performance %f %%' % (best_validation_loss * 100., best_iter + 1, test_score * 100.))
+		print(('The code for file ' + os.path.split(__file__)[1] + ' ran for %.2fm' % ((end_time - start_time) / 60.)))
 
 
 #help function
@@ -189,7 +385,7 @@ def load_data(dataset='mnist.pkl.gz'):
 	input:
 		dataset @string:the path to the dataset
 	output:
-		rsl @a array with three share value
+		rsl @a array with three share value; 每行表示一个数据集
 	'''
 	data_dir, data_file = os.path.split(dataset)
 	#load from local
@@ -220,6 +416,7 @@ def load_data(dataset='mnist.pkl.gz'):
 			train_set, valid_set, test_set = pickle.load(f)
 
 	#将数据转为shared_variable
+	#每个x都是一个矩阵，每行表示一个数据用例；y是一个一维向量，每个元素表示一个用例的label
 	test_set_x, test_set_y = shared_dataset(test_set)
 	valid_set_x, valid_set_y = shared_dataset(valid_set)
 	train_set_x, train_set_y = shared_dataset(train_set)
@@ -228,4 +425,12 @@ def load_data(dataset='mnist.pkl.gz'):
 			(valid_set_x, valid_set_y),
 			(test_set_x, test_set_y)]
 
-print load_data()
+#test function
+#test lenet
+def experiment_lenet():
+	lenet = simpleLenet()
+	lenet.build()
+	lenet.train()
+
+experiment_lenet()
+#print load_data()
